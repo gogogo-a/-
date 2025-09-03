@@ -1,10 +1,15 @@
-from flask import Flask, render_template, session
+from flask import Flask, render_template, session, request
 from settings import app, db, BASE_URL
 from routes.user_api import user_api
 from routes.house_api import house_api
 from middleware import setup_request_logging
 from utils import async_tasks
+from logging_config import setup_logging
 import os
+import logging
+
+# 设置日志
+logger = setup_logging(app)
 
 # 注册蓝图
 app.register_blueprint(house_api)
@@ -26,21 +31,26 @@ def inject_user():
 # 错误处理
 @app.errorhandler(404)
 def page_not_found(e):
+    logger.warning(f"页面未找到: {request.path}")
     return render_template('index.html'), 404
 
 @app.errorhandler(500)
 def internal_server_error(e):
+    logger.error(f"服务器内部错误: {str(e)}")
     return render_template('index.html'), 500
 
 # 初始化Redis缓存和启动异步任务处理线程
 def init_app():
     # 缓存初始数据
+    logger.info("开始缓存初始数据")
     async_tasks.cache_initial_data(app)
     
     # 启动异步任务处理线程
+    logger.info("启动异步任务处理线程")
     worker = async_tasks.start_task_worker(app)
     
     # 启动定期更新任务
+    logger.info("启动定期更新任务")
     async_tasks.schedule_periodic_updates()
     
     return worker
@@ -58,8 +68,10 @@ if __name__ == '__main__':
     try:
         # 从BASE_URL中提取端口号
         port = 9000
+        logger.info(f"启动Web服务器，端口: {port}")
         app.run(debug=True, host='0.0.0.0', port=port)
     finally:
         # 停止异步任务处理线程
         if worker:
+            logger.info("停止异步任务处理线程")
             worker.stop()

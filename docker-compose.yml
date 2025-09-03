@@ -1,0 +1,157 @@
+version: '3'
+
+services:
+  # MySQL节点1（主要写操作）
+  mysql-node1:
+    image: mysql:8.0
+    container_name: mysql-node1
+    restart: always
+    ports:
+      - "3307:3306"  # 修改为3307端口，避免与现有MySQL冲突
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: rental_house
+    volumes:
+      - ./docker/mysql/node1/data:/var/lib/mysql
+      - ./docker/mysql/node1/conf:/etc/mysql/conf.d
+      - ./docker/mysql/node1/init:/docker-entrypoint-initdb.d
+    command: --default-authentication-plugin=mysql_native_password
+    networks:
+      - rental-net
+
+  # MySQL节点2（主要读操作）
+  mysql-node2:
+    image: mysql:8.0
+    container_name: mysql-node2
+    restart: always
+    ports:
+      - "3308:3306"  # 修改为3308端口
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: rental_house
+    volumes:
+      - ./docker/mysql/node2/data:/var/lib/mysql
+      - ./docker/mysql/node2/conf:/etc/mysql/conf.d
+      - ./docker/mysql/node2/init:/docker-entrypoint-initdb.d
+    command: --default-authentication-plugin=mysql_native_password
+    depends_on:
+      - mysql-node1
+    networks:
+      - rental-net
+
+  # MySQL代理（ProxySQL）
+  proxysql:
+    image: proxysql/proxysql:2.4.4
+    container_name: proxysql
+    restart: always
+    ports:
+      - "6033:6033"  # MySQL客户端连接端口
+      - "6032:6032"  # ProxySQL管理端口
+    volumes:
+      - ./docker/proxysql/proxysql.cnf:/etc/proxysql.cnf
+    depends_on:
+      - mysql-node1
+      - mysql-node2
+    networks:
+      - rental-net
+
+  # Redis主节点
+  redis-master:
+    image: redis:6.2
+    container_name: redis-master
+    restart: always
+    ports:
+      - "6380:6379"  # 修改为6380端口，避免与现有Redis冲突
+    volumes:
+      - ./docker/redis/master/data:/data
+      - ./docker/redis/master/conf/redis.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    networks:
+      - rental-net
+
+  # Redis从节点1
+  redis-slave-1:
+    image: redis:6.2
+    container_name: redis-slave-1
+    restart: always
+    ports:
+      - "6381:6379"  # 修改为6381端口
+    volumes:
+      - ./docker/redis/slave1/data:/data
+      - ./docker/redis/slave1/conf/redis.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    depends_on:
+      - redis-master
+    networks:
+      - rental-net
+
+  # Redis从节点2
+  redis-slave-2:
+    image: redis:6.2
+    container_name: redis-slave-2
+    restart: always
+    ports:
+      - "6382:6379"  # 修改为6382端口
+    volumes:
+      - ./docker/redis/slave2/data:/data
+      - ./docker/redis/slave2/conf/redis.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    depends_on:
+      - redis-master
+    networks:
+      - rental-net
+
+  # Redis哨兵1
+  redis-sentinel-1:
+    image: redis:6.2
+    container_name: redis-sentinel-1
+    restart: always
+    ports:
+      - "26379:26379"
+    volumes:
+      - ./docker/redis/sentinel1/sentinel.conf:/usr/local/etc/redis/sentinel.conf
+    command: redis-sentinel /usr/local/etc/redis/sentinel.conf
+    depends_on:
+      - redis-master
+      - redis-slave-1
+      - redis-slave-2
+    networks:
+      - rental-net
+
+  # Redis哨兵2
+  redis-sentinel-2:
+    image: redis:6.2
+    container_name: redis-sentinel-2
+    restart: always
+    ports:
+      - "26380:26379"
+    volumes:
+      - ./docker/redis/sentinel2/sentinel.conf:/usr/local/etc/redis/sentinel.conf
+    command: redis-sentinel /usr/local/etc/redis/sentinel.conf
+    depends_on:
+      - redis-master
+      - redis-slave-1
+      - redis-slave-2
+    networks:
+      - rental-net
+
+  # Redis哨兵3
+  redis-sentinel-3:
+    image: redis:6.2
+    container_name: redis-sentinel-3
+    restart: always
+    ports:
+      - "26381:26379"
+    volumes:
+      - ./docker/redis/sentinel3/sentinel.conf:/usr/local/etc/redis/sentinel.conf
+    command: redis-sentinel /usr/local/etc/redis/sentinel.conf
+    depends_on:
+      - redis-master
+      - redis-slave-1
+      - redis-slave-2
+    networks:
+      - rental-net
+
+networks:
+  rental-net:
+    driver: bridge 

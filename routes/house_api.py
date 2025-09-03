@@ -5,6 +5,11 @@ import random
 from sqlalchemy import func, desc, or_
 from predict.price_prediction import predict_price_trend, get_room_type_distribution, get_top_communities, get_price_by_room_type
 from utils import redis_utils, async_tasks
+import logging
+
+# 配置日志
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger('house_api')
 
 # 创建蓝图
 house_api = Blueprint('house_api', __name__)
@@ -17,6 +22,7 @@ def index():
     
     if recommended_houses is None:
         # Redis中没有数据，从数据库获取
+        logger.info("Redis缓存未命中: 热点房源")
         recommended_houses_db = House.query.order_by(House.page_views.desc()).limit(6).all()
         
         # 缓存到Redis
@@ -35,12 +41,15 @@ def index():
                 'block': house.block,
                 'address': house.address
             })
+    else:
+        logger.info("Redis缓存命中: 热点房源")
     
     # 尝试从Redis获取高浏览量房源
     hot_houses = redis_utils.get_high_view_houses()
     
     if hot_houses is None:
         # Redis中没有数据，从数据库获取
+        logger.info("Redis缓存未命中: 高浏览量房源")
         hot_houses_db = House.query.order_by(db.func.random()).limit(4).all()
         
         # 缓存到Redis
@@ -59,6 +68,8 @@ def index():
                 'block': house.block,
                 'address': house.address
             })
+    else:
+        logger.info("Redis缓存命中: 高浏览量房源")
     
     # 获取房源总数
     house_count = House.query.count()
@@ -80,6 +91,7 @@ def house_detail(house_id):
     
     # 更新Redis缓存
     redis_utils.cache_house_detail(house)
+    logger.info(f"更新Redis缓存: 房源详情 {house_id}")
     
     # 记录用户浏览历史
     if 'user_id' in session:
@@ -87,9 +99,11 @@ def house_detail(house_id):
         
         # 异步更新用户浏览历史（先更新MySQL，再更新Redis）
         async_tasks.async_update_user_history(user_id, house_id)
+        logger.info(f"异步更新: 用户 {user_id} 浏览历史 {house_id}")
         
         # 异步更新推荐数据
         async_tasks.async_update_user_recommend(user_id, house_id)
+        logger.info(f"异步更新: 用户 {user_id} 推荐数据 {house_id}")
     
     # 获取相似推荐房源
     similar_houses = House.query.filter(
@@ -265,6 +279,7 @@ def add_collection(house_id):
     
     # 异步更新收藏（先更新MySQL，再更新Redis）
     async_tasks.async_update_user_collection(user_id, house_id, 'add')
+    logger.info(f"异步更新: 用户 {user_id} 添加收藏 {house_id}")
     
     return jsonify({'status': 'success', 'message': '收藏成功', 'valid': '1', 'msg': '收藏成功'})
 
@@ -291,6 +306,7 @@ def collect_off():
     
     # 异步更新收藏（先更新MySQL，再更新Redis）
     async_tasks.async_update_user_collection(user_id, house_id, 'remove')
+    logger.info(f"异步更新: 用户 {user_id} 取消收藏 {house_id}")
     
     return jsonify({'status': 'success', 'message': '取消收藏成功'})
 
@@ -307,6 +323,7 @@ def check_collection(house_id):
     
     if is_collected is None:
         # Redis中没有数据，从数据库获取
+        logger.info(f"Redis缓存未命中: 用户 {user_id} 收藏状态 {house_id}")
         user = User.query.get(user_id)
         
         if not user:
@@ -322,6 +339,9 @@ def check_collection(house_id):
         # 缓存到Redis
         if is_collected:
             redis_utils.cache_user_collection(user_id, collect_ids)
+            logger.info(f"更新Redis缓存: 用户 {user_id} 收藏列表")
+    else:
+        logger.info(f"Redis缓存命中: 用户 {user_id} 收藏状态 {house_id}")
     
     return jsonify({'is_collected': bool(is_collected)})
 
@@ -332,6 +352,7 @@ def price_trend_api(location):
     region = parts[0] if len(parts) > 0 else ''
     block = parts[1] if len(parts) > 1 else None
     
+    logger.info(f"调用价格走势预测: {region}-{block if block else ''}")
     # 调用预测模型
     trend_data = predict_price_trend(region, block)
     
@@ -344,6 +365,7 @@ def room_distribution_api(location):
     region = parts[0] if len(parts) > 0 else ''
     block = parts[1] if len(parts) > 1 else None
     
+    logger.info(f"调用户型分布统计: {region}-{block if block else ''}")
     # 获取户型分布数据
     distribution_data = get_room_type_distribution(region, block)
     
@@ -356,6 +378,7 @@ def community_ranking_api(location):
     region = parts[0] if len(parts) > 0 else ''
     block = parts[1] if len(parts) > 1 else None
     
+    logger.info(f"调用小区排名统计: {region}-{block if block else ''}")
     # 获取小区排名数据
     ranking_data = get_top_communities(region, block)
     
@@ -368,6 +391,7 @@ def room_price_api(location):
     region = parts[0] if len(parts) > 0 else ''
     block = parts[1] if len(parts) > 1 else None
     
+    logger.info(f"调用户型价格分析: {region}-{block if block else ''}")
     # 获取户型价格数据
     price_data = get_price_by_room_type(region, block)
     
