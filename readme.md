@@ -17,6 +17,71 @@
 - Redis Sentinel提供缓存服务的故障转移
 - ProxySQL实现数据库读写分离，优化查询性能
 
+### 数据库主从复制机制
+
+#### MySQL主从复制
+MySQL采用异步复制机制，通过以下方式实现：
+
+1. **主节点配置**:
+   - `server-id=1`: 唯一标识主节点
+   - `log_bin=mysql-bin`: 启用二进制日志
+   - `binlog_format=ROW`: 使用行级复制格式
+   - `binlog_do_db=rental_house`: 只复制指定数据库
+
+2. **从节点配置**:
+   - `server-id=2`: 唯一标识从节点
+   - `log_bin=mysql-bin`: 启用二进制日志
+   - `relay-log=slave-relay-bin`: 设置中继日志
+   - `read_only=ON`: 从节点设为只读
+   - `replicate_do_db=rental_house`: 只复制指定数据库
+
+3. **复制过程**:
+   - 主节点记录所有数据变更到二进制日志(binlog)
+   - 从节点的I/O线程连接到主节点，请求二进制日志
+   - 主节点发送二进制日志到从节点
+   - 从节点的SQL线程执行接收到的变更操作
+
+4. **复制初始化**:
+   - 获取主节点当前二进制日志文件名和位置
+   - 在从节点执行`CHANGE MASTER TO`命令，指定主节点信息
+   - 启动从节点复制线程(`START SLAVE`)
+   - 验证复制状态(`SHOW SLAVE STATUS`)
+
+#### Redis主从复制
+Redis采用异步复制机制，结合哨兵模式实现高可用：
+
+1. **主从配置**:
+   - 从节点通过`replicaof redis-master 6379`指令连接到主节点
+   - 从节点设置`replica-read-only yes`确保只读
+   - 主从节点都配置`requirepass`和`masterauth`实现安全认证
+
+2. **复制过程**:
+   - 初次同步：主节点创建RDB快照，发送给从节点
+   - 增量同步：主节点将写命令发送给从节点
+   - 从节点异步应用接收到的命令
+
+3. **哨兵机制**:
+   - 3个哨兵节点监控主从节点健康状态
+   - 哨兵配置`sentinel monitor mymaster redis-master 6379 2`(仲裁数为2)
+   - 当主节点故障时，哨兵自动选择从节点升级为新主节点
+   - 应用程序通过哨兵发现当前主节点
+
+### ProxySQL流量分配机制
+
+ProxySQL实现了MySQL的读写分离和流量分配：
+
+1. **服务器配置**:
+   - 主节点(mysql-node1)和从节点(mysql-node2)都在同一个hostgroup(10)
+   - 主节点权重为1000，从节点权重为500，实现2:1的流量分配比例
+
+2. **查询规则**:
+   - 所有查询(SELECT、UPDATE、INSERT等)都路由到同一个hostgroup
+   - 在hostgroup内部按权重分配连接
+
+3. **连接管理**:
+   - 每个节点最大连接数为500
+   - 支持连接池和多路复用，减少连接开销
+
 ## 功能模块
 
 ### 房源管理
@@ -97,13 +162,13 @@ python migrate_data.py --import
 - 应用服务配置
 
 ## 水平扩展能力
-- MySQL Group Replication支持数据库集群扩展
-- Redis主从复制与哨兵机制支持缓存服务扩展
+- MySQL主从复制支持数据库高可用
+- Redis主从复制与哨兵机制支持缓存服务高可用
 - 应用服务支持多实例部署，通过负载均衡分发请求
 - 支持容器化部署，便于云环境弹性扩展
 
 ## 性能优化
-- ProxySQL实现读写分离，提升数据库性能
+- ProxySQL实现流量分配，主节点与从节点权重比为2:1
 - Redis缓存减轻数据库负载
 - 异步任务处理避免阻塞用户请求
 - 合理的缓存策略优化内存使用
