@@ -8,37 +8,28 @@ NC='\033[0m' # No Color
 
 echo -e "${GREEN}===== 租房系统启动脚本 =====${NC}"
 
-# 检查Docker是否安装
-if ! command -v docker &> /dev/null; then
-    echo -e "${RED}错误: Docker未安装，请先安装Docker${NC}"
-    exit 1
-fi
+# 检查必要依赖
+check_dependency() {
+    if ! command -v $1 &> /dev/null; then
+        echo -e "${RED}错误: $2未安装，请先安装$2${NC}"
+        exit 1
+    fi
+}
 
-# 检查Docker Compose是否安装
-if ! command -v docker-compose &> /dev/null; then
-    echo -e "${RED}错误: Docker Compose未安装，请先安装Docker Compose${NC}"
-    exit 1
-fi
+check_dependency docker "Docker"
+check_dependency docker-compose "Docker Compose"
+check_dependency python3 "Python3"
 
-# 检查Python是否安装
-if ! command -v python3 &> /dev/null; then
-    echo -e "${RED}错误: Python3未安装，请先安装Python3${NC}"
-    exit 1
-fi
-
-# 检查虚拟环境是否存在
+# 准备Python环境
 if [ ! -d "venv" ]; then
     echo -e "${YELLOW}创建Python虚拟环境...${NC}"
     python3 -m venv venv
     echo -e "${GREEN}虚拟环境创建成功${NC}"
 fi
 
-# 激活虚拟环境
-echo -e "${YELLOW}激活虚拟环境...${NC}"
+# 激活虚拟环境并安装依赖
+echo -e "${YELLOW}激活虚拟环境并安装依赖...${NC}"
 source venv/bin/activate
-
-# 安装依赖
-echo -e "${YELLOW}安装Python依赖...${NC}"
 pip install -r requirements.txt
 pip install cryptography pymysql redis
 
@@ -47,7 +38,7 @@ echo -e "${YELLOW}启动Docker容器...${NC}"
 docker-compose down --remove-orphans  # 先停止所有容器
 docker-compose up -d
 
-# 等待MySQL和Redis启动
+# 等待服务启动
 echo -e "${YELLOW}等待数据库服务启动...${NC}"
 sleep 20
 
@@ -55,29 +46,36 @@ sleep 20
 echo -e "${YELLOW}设置MySQL主从复制...${NC}"
 ./setup_replication.sh
 
-# 检查MySQL节点1连接
-echo -e "${YELLOW}检查MySQL节点1连接...${NC}"
-if ! docker exec -i mysql-node1 mysql -uroot -prootpassword -e "SELECT 1" &> /dev/null; then
-    echo -e "${RED}错误: 无法连接到MySQL节点1，请检查Docker容器${NC}"
-    exit 1
-fi
-echo -e "${GREEN}MySQL节点1连接成功${NC}"
+# 检查服务连接
+check_mysql_connection() {
+    echo -e "${YELLOW}检查$1连接...${NC}"
+    if ! docker exec -i $2 mysql -uroot -prootpassword -e "SELECT 1" &> /dev/null; then
+        echo -e "${RED}错误: 无法连接到$1，请检查Docker容器${NC}"
+        return 1
+    fi
+    echo -e "${GREEN}$1连接成功${NC}"
+    return 0
+}
 
-# 检查MySQL节点2连接
-echo -e "${YELLOW}检查MySQL节点2连接...${NC}"
-if ! docker exec -i mysql-node2 mysql -uroot -prootpassword -e "SELECT 1" &> /dev/null; then
-    echo -e "${RED}错误: 无法连接到MySQL节点2，请检查Docker容器${NC}"
-    exit 1
-fi
-echo -e "${GREEN}MySQL节点2连接成功${NC}"
+check_redis_connection() {
+    echo -e "${YELLOW}检查$1连接...${NC}"
+    if ! docker exec -i $2 redis-cli $3 ping &> /dev/null; then
+        echo -e "${RED}错误: 无法连接到$1，请检查Docker容器${NC}"
+        return 1
+    fi
+    echo -e "${GREEN}$1连接成功${NC}"
+    return 0
+}
+
+# 检查MySQL连接
+check_mysql_connection "MySQL节点1" "mysql-node1" || exit 1
+check_mysql_connection "MySQL节点2" "mysql-node2" || exit 1
 
 # 检查ProxySQL连接
 echo -e "${YELLOW}检查ProxySQL连接...${NC}"
 if ! docker exec -i proxysql mysql -uadmin -padmin -h127.0.0.1 -P6032 -e "SELECT 1" &> /dev/null; then
     echo -e "${YELLOW}ProxySQL管理接口不可用，尝试初始化...${NC}"
-    # 等待ProxySQL启动
     sleep 10
-    # 再次尝试
     if ! docker exec -i proxysql mysql -uadmin -padmin -h127.0.0.1 -P6032 -e "SELECT 1" &> /dev/null; then
         echo -e "${RED}错误: 无法连接到ProxySQL管理接口，请检查Docker容器${NC}"
     else
@@ -95,29 +93,10 @@ else
     echo -e "${GREEN}应用数据库连接成功${NC}"
 fi
 
-# 检查Redis主节点连接
-echo -e "${YELLOW}检查Redis主节点连接...${NC}"
-if ! docker exec -i redis-master redis-cli -a redis123 ping &> /dev/null; then
-    echo -e "${RED}错误: 无法连接到Redis主节点，请检查Docker容器${NC}"
-    exit 1
-fi
-echo -e "${GREEN}Redis主节点连接成功${NC}"
-
-# 检查Redis从节点连接
-echo -e "${YELLOW}检查Redis从节点连接...${NC}"
-if ! docker exec -i redis-slave-1 redis-cli -a redis123 ping &> /dev/null; then
-    echo -e "${RED}错误: 无法连接到Redis从节点1，请检查Docker容器${NC}"
-    exit 1
-fi
-echo -e "${GREEN}Redis从节点1连接成功${NC}"
-
-# 检查Redis哨兵连接
-echo -e "${YELLOW}检查Redis哨兵连接...${NC}"
-if ! docker exec -i redis-sentinel-1 redis-cli -p 26379 ping &> /dev/null; then
-    echo -e "${RED}错误: 无法连接到Redis哨兵1，请检查Docker容器${NC}"
-    exit 1
-fi
-echo -e "${GREEN}Redis哨兵1连接成功${NC}"
+# 检查Redis连接
+check_redis_connection "Redis主节点" "redis-master" "-a redis123" || exit 1
+check_redis_connection "Redis从节点1" "redis-slave-1" "-a redis123" || exit 1
+check_redis_connection "Redis哨兵1" "redis-sentinel-1" "-p 26379" || exit 1
 
 # 创建环境变量配置文件
 if [ ! -f ".env" ]; then
@@ -150,27 +129,6 @@ LOG_LEVEL=INFO
 LOG_DIR=logs
 EOL
     echo -e "${GREEN}环境变量配置文件创建成功${NC}"
-fi
-
-# 创建数据迁移配置文件
-if [ ! -f ".env.migrate" ]; then
-    echo -e "${YELLOW}创建数据迁移配置文件...${NC}"
-    cat > .env.migrate << EOL
-# 源数据库配置
-SOURCE_DB_HOST=localhost
-SOURCE_DB_PORT=3306
-SOURCE_DB_USER=root
-SOURCE_DB_PASSWORD=rootpassword
-SOURCE_DB_NAME=rental_house
-
-# 目标数据库配置
-TARGET_DB_HOST=localhost
-TARGET_DB_PORT=6033
-TARGET_DB_USER=root
-TARGET_DB_PASSWORD=rootpassword
-TARGET_DB_NAME=rental_house
-EOL
-    echo -e "${GREEN}数据迁移配置文件创建成功${NC}"
 fi
 
 # 执行数据迁移

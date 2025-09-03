@@ -414,3 +414,22 @@ $29
 rental_house:high_view_houses
 $13
 1756968254768
+*2
+$6
+SELECT
+$1
+0
+*3
+$3
+SET
+$32
+rental_house:house_detail:101609
+$714
+{"id": 101609, "title": "\u9f99\u6e7e\u522b\u5885 \u94a5\u5319\u623f \u7cbe\u88c5\u548c\u9662 \u5927\u82b1\u56ed \u53cc\u8f66\u4f4d \u4f18\u5c71\u7f8e\u5730", "price": "40000", "area": "380", "rooms": "5\u5ba42\u5385", "direction": "\u671d\u5357", "rent_type": "\u6574\u79df", "region": "\u987a\u4e49\u533a", "block": "\u987a\u4e49-\u4e2d\u592e\u522b\u5885\u533a", "address": "\u987a\u4e49-\u4e2d\u592e\u522b\u5885\u533a-\u9f99\u6e7e\u522b\u5885", "traffic": "", "publish_time": 1561132800, "facilities": "\u9732\u53f0-\u9601\u697c", "highlights": "\u623f\u6e90\u4eae\u70b9", "matching": "None", "travel": "None", "page_views": 842, "landlord": "\u65b9\u6657", "phone_num": "13651136681", "house_num": "434469496"}
+*3
+$9
+PEXPIREAT
+$32
+rental_house:house_detail:101609
+$13
+1756970446194

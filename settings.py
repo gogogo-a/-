@@ -30,66 +30,43 @@ app.config['SQLALCHEMY_DATABASE_URI'] = f'mysql+pymysql://{DB_USER}:{DB_PASS}@{D
 db = SQLAlchemy(app)
 
 # Redis配置
-REDIS_MODE = os.getenv('REDIS_MODE', 'standalone')  # standalone, sentinel
+REDIS_SENTINELS = [
+    (os.getenv('REDIS_SENTINEL_1_HOST', 'localhost'), 
+     int(os.getenv('REDIS_SENTINEL_1_PORT', 26379))),
+    (os.getenv('REDIS_SENTINEL_2_HOST', 'localhost'), 
+     int(os.getenv('REDIS_SENTINEL_2_PORT', 26380))),
+    (os.getenv('REDIS_SENTINEL_3_HOST', 'localhost'), 
+     int(os.getenv('REDIS_SENTINEL_3_PORT', 26381)))
+]
+REDIS_MASTER_NAME = os.getenv('REDIS_MASTER_NAME', 'mymaster')
+REDIS_PASSWORD = os.getenv('REDIS_PASSWORD', 'redis123')
 
-if REDIS_MODE == 'sentinel':
-    # Redis哨兵配置
-    REDIS_SENTINELS = [
-        (os.getenv('REDIS_SENTINEL_1_HOST', 'localhost'), 8000),        (os.getenv('REDIS_SENTINEL_1_HOST', 'localhost'), 
-         int(os.getenv('REDIS_SENTINEL_1_PORT', 26379))),
-        (os.getenv('REDIS_SENTINEL_2_HOST', 'localhost'), 
-         int(os.getenv('REDIS_SENTINEL_2_PORT', 26380))),
-        (os.getenv('REDIS_SENTINEL_3_HOST', 'localhost'), 
-         int(os.getenv('REDIS_SENTINEL_3_PORT', 26381)))
-    ]
-    REDIS_MASTER_NAME = os.getenv('REDIS_MASTER_NAME', 'mymaster')
-    REDIS_PASSWORD = os.getenv('REDIS_PASSWORD', 'redis123')
+# 创建Redis哨兵连接
+sentinel = Sentinel(REDIS_SENTINELS, socket_timeout=10.0, password=REDIS_PASSWORD)
 
-    # 创建Redis哨兵连接，增加超时时间
-    sentinel = Sentinel(REDIS_SENTINELS, socket_timeout=10.0, password=REDIS_PASSWORD)
+# 获取Redis主节点连接（用于写操作）
+def get_redis_master():
+    try:
+        # 使用本地端口映射连接Redis主节点
+        return redis.Redis(host='localhost', port=6380, password=REDIS_PASSWORD, 
+                          socket_timeout=10.0, db=0, decode_responses=True)
+    except Exception as e:
+        print(f"直接连接Redis主节点失败: {e}")
+        # 如果直接连接失败，尝试通过哨兵连接
+        return sentinel.master_for(REDIS_MASTER_NAME, socket_timeout=10.0, 
+                                  password=REDIS_PASSWORD, db=0, decode_responses=True)
 
-    # 获取Redis主节点连接（用于写操作）
-    def get_redis_master():
-        try:
-            # 使用本地端口映射连接Redis主节点
-            return redis.Redis(host='localhost', port=6380, password=REDIS_PASSWORD, socket_timeout=10.0, db=0, decode_responses=True)
-        except Exception as e:
-            print(f"直接连接Redis主节点失败: {e}")
-            # 如果直接连接失败，尝试通过哨兵连接
-            return sentinel.master_for(REDIS_MASTER_NAME, socket_timeout=10.0, password=REDIS_PASSWORD, db=0, decode_responses=True)
-
-    # 获取Redis从节点连接（用于读操作）
-    def get_redis_slave():
-        try:
-            # 使用本地端口映射连接Redis从节点1
-            return redis.Redis(host='localhost', port=6381, password=REDIS_PASSWORD, socket_timeout=10.0, db=0, decode_responses=True)
-        except Exception as e:
-            print(f"直接连接Redis从节点失败: {e}")
-            # 如果直接连接失败，尝试通过哨兵连接
-            return sentinel.slave_for(REDIS_MASTER_NAME, socket_timeout=10.0, password=REDIS_PASSWORD, db=0, decode_responses=True)
-else:
-    # 单节点Redis配置
-    REDIS_HOST = os.getenv('REDIS_HOST', 'localhost')
-    REDIS_PORT = int(os.getenv('REDIS_PORT', 6379))
-    REDIS_DB = int(os.getenv('REDIS_DB', 0))
-    REDIS_PASSWORD = os.getenv('REDIS_PASSWORD', None)
-
-    # 创建Redis连接池
-    redis_pool = redis.ConnectionPool(
-        host=REDIS_HOST,
-        port=REDIS_PORT,
-        db=REDIS_DB,
-        password=REDIS_PASSWORD,
-        decode_responses=True
-    )
-
-    # 获取Redis主节点连接（用于写操作）
-    def get_redis_master():
-        return redis.Redis(connection_pool=redis_pool)
-
-    # 获取Redis从节点连接（用于读操作）
-    def get_redis_slave():
-        return redis.Redis(connection_pool=redis_pool)
+# 获取Redis从节点连接（用于读操作）
+def get_redis_slave():
+    try:
+        # 使用本地端口映射连接Redis从节点1
+        return redis.Redis(host='localhost', port=6381, password=REDIS_PASSWORD, 
+                          socket_timeout=10.0, db=0, decode_responses=True)
+    except Exception as e:
+        print(f"直接连接Redis从节点失败: {e}")
+        # 如果直接连接失败，尝试通过哨兵连接
+        return sentinel.slave_for(REDIS_MASTER_NAME, socket_timeout=10.0, 
+                                 password=REDIS_PASSWORD, db=0, decode_responses=True)
 
 # 测试Redis连接
 try:

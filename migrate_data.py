@@ -13,27 +13,15 @@ logger = logging.getLogger('migrate_data')
 # 加载环境变量
 load_dotenv()
 
-# 目标数据库配置 - 确保使用主节点
+# 数据库配置 - 使用root用户
 DB_CONFIG = {
-    'host': 'localhost',  # 直接使用localhost，不从环境变量读取
-    'port': 3307,  # MySQL节点1端口（主节点）
-    'user': 'root',  # 直接使用root用户，不从环境变量读取
-    'password': 'rootpassword',  # 直接使用rootpassword密码，不从环境变量读取
-    'db': 'rental_house',  # 直接指定数据库名，不从环境变量读取
+    'host': 'localhost',  # 直接使用localhost
+    'port': 6033,  # ProxySQL端口
+    'user': 'root',  # 使用root用户
+    'password': 'rootpassword',  # 使用rootpassword密码
+    'db': 'rental_house',  # 数据库名
     'charset': 'utf8mb4',
     'connect_timeout': 6000,  # 增加连接超时时间
-    'read_default_file': '/etc/my.cnf'  # 尝试读取MySQL配置文件
-}
-
-# 添加源数据库配置，用于迁移功能
-SOURCE_DB = {
-    'host': os.getenv('SOURCE_DB_HOST', 'localhost'),
-    'port': int(os.getenv('SOURCE_DB_PORT', 3306)),
-    'user': os.getenv('SOURCE_DB_USER', 'root'),
-    'password': os.getenv('SOURCE_DB_PASSWORD', 'rootpassword'),
-    'db': os.getenv('SOURCE_DB_NAME', 'rental_house'),
-    'charset': 'utf8mb4',
-    'connect_timeout': 30
 }
 
 def connect_db(config=None):
@@ -68,124 +56,20 @@ def connect_db(config=None):
         except Exception:
             # 如果无法创建数据库，尝试直接连接到指定数据库
             conn = pymysql.connect(
-            host=config['host'],
-            port=config['port'],
-            user=config['user'],
-            password=config['password'],
-            db=config['db'],
-            charset=config['charset'],
+                host=config['host'],
+                port=config['port'],
+                user=config['user'],
+                password=config['password'],
+                db=config['db'],
+                charset=config['charset'],
                 connect_timeout=config.get('connect_timeout', 30),
-            cursorclass=pymysql.cursors.DictCursor
-        )
-        logger.info(f"成功连接到数据库: {config['host']}:{config['port']}/{config['db']}")
-        return conn
+                cursorclass=pymysql.cursors.DictCursor
+            )
+            logger.info(f"成功连接到数据库: {config['host']}:{config['port']}/{config['db']}")
+            return conn
     except Exception as e:
         logger.error(f"连接数据库失败: {str(e)}")
         return None
-
-def migrate_all_tables():
-    """迁移所有表"""
-    logger.info("开始数据迁移")
-    
-    # 连接源数据库
-    source_conn = connect_db(SOURCE_DB)
-    if not source_conn:
-        logger.error("无法连接到源数据库，尝试直接导入SQL文件")
-        return import_from_sql_file()
-    
-    # 连接目标数据库
-    target_conn = connect_db(DB_CONFIG)
-    if not target_conn:
-        source_conn.close()
-        logger.error("无法连接到目标数据库")
-        return False
-    
-    try:
-        # 获取所有表
-        with source_conn.cursor() as cursor:
-            cursor.execute("SHOW TABLES")
-            tables = [list(row.values())[0] for row in cursor.fetchall()]
-        
-        if not tables:
-            logger.error("源数据库中没有找到需要迁移的表，尝试直接导入SQL文件")
-            source_conn.close()
-            target_conn.close()
-            return import_from_sql_file()
-        
-        logger.info(f"找到 {len(tables)} 个表需要迁移: {', '.join(tables)}")
-        
-        # 迁移每个表
-        success_count = 0
-        for table_name in tables:
-            logger.info(f"开始迁移表: {table_name}")
-            
-            # 获取表结构
-            with source_conn.cursor() as cursor:
-                cursor.execute(f"SHOW CREATE TABLE {table_name}")
-                result = cursor.fetchone()
-                table_structure = result['Create Table']
-            
-            # 在目标数据库中创建表
-            try:
-                with target_conn.cursor() as cursor:
-                    # 先尝试删除表（如果存在）
-                    cursor.execute(f"DROP TABLE IF EXISTS {table_name}")
-                    target_conn.commit()
-                    
-                    # 创建表
-                    cursor.execute(table_structure)
-                    target_conn.commit()
-                    logger.info(f"表 {table_name} 结构创建成功")
-            except Exception as e:
-                logger.error(f"表 {table_name} 结构创建失败: {str(e)}")
-                continue
-            
-            # 获取数据
-            with source_conn.cursor() as cursor:
-                cursor.execute(f"SELECT * FROM {table_name}")
-                data = cursor.fetchall()
-                logger.info(f"获取表 {table_name} 数据: {len(data)} 行")
-            
-            # 如果有数据，插入数据
-            if data:
-                try:
-                    with target_conn.cursor() as cursor:
-                        # 获取列名
-                        cursor.execute(f"SHOW COLUMNS FROM {table_name}")
-                        columns = [row['Field'] for row in cursor.fetchall()]
-                        
-                        # 构建SQL
-                        placeholders = ', '.join(['%s'] * len(columns))
-                        columns_str = ', '.join(columns)
-                        sql = f"INSERT INTO {table_name} ({columns_str}) VALUES ({placeholders})"
-                        
-                        # 准备数据
-                        values = []
-                        for row in data:
-                            row_values = [row.get(col) for col in columns]
-                            values.append(row_values)
-                        
-                        # 批量插入
-                        cursor.executemany(sql, values)
-                        target_conn.commit()
-                        logger.info(f"表 {table_name} 数据插入成功: {len(data)} 行")
-                except Exception as e:
-                    logger.error(f"表 {table_name} 数据插入失败: {str(e)}")
-                    continue
-            
-                success_count += 1
-            logger.info(f"表 {table_name} 迁移完成")
-        
-        logger.info(f"数据迁移完成: 成功 {success_count}/{len(tables)} 个表")
-        return success_count > 0
-    
-    except Exception as e:
-        logger.error(f"数据迁移过程中出错: {str(e)}")
-        return False
-    
-    finally:
-        source_conn.close()
-        target_conn.close()
 
 def check_tables():
     """检查数据库中的表"""
@@ -219,7 +103,7 @@ def disable_read_only_via_docker():
         logger.info("尝试通过Docker命令禁用MySQL的只读模式...")
         
         # 对mysql-node1执行命令
-        cmd = "docker exec -i mysql-node1 mysql -uroot -proot -e \"SET GLOBAL read_only = 0; SET GLOBAL super_read_only = 0;\""
+        cmd = "docker exec -i mysql-node1 mysql -uroot -prootpassword -e \"SET GLOBAL read_only = 0; SET GLOBAL super_read_only = 0;\""
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         
         if result.returncode == 0:
@@ -360,13 +244,11 @@ def show_help():
 
 命令行参数:
    --import      从SQL文件导入数据到数据库
-   --migrate     从源数据库迁移数据到目标数据库
    --check       检查数据库中的表
    --help        显示此帮助信息
 
 示例:
    python migrate_data.py --import   # 从SQL文件导入数据
-   python migrate_data.py --migrate  # 从源数据库迁移数据
    python migrate_data.py --check    # 检查数据库中的表
 """)
 
@@ -377,8 +259,6 @@ if __name__ == "__main__":
             check_tables()
         elif sys.argv[1] == "--import":
             import_from_sql_file()
-        elif sys.argv[1] == "--migrate":
-            migrate_all_tables()
         elif sys.argv[1] == "--help":
             show_help()
         else:
