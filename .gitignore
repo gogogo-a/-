@@ -74,9 +74,7 @@ local_settings.py
 docker/mysql/*/data/
 docker/redis/*/data/
 docker/proxysql/data/
-.docker/
-docker/
-docker
+
 # 其他
 .DS_Store
 Thumbs.db 
